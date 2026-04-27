@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>NLP — Spatial Repo · Collaborative Torrent Sync</title>
+
+    <!-- Yjs + WebTorrent from CDN – required for sync features -->
+    <script src="https://unpkg.com/yjs@13.6.10/dist/yjs.min.js"></script>
+    <script src="https://unpkg.com/webtorrent@2.0.18/webtorrent.min.js"></script>
+
+    <style>
+        :root {
+            --bg-dark: #b0a797;
+            --bg-mid: #c9c1b2;
+            --bg-light: #e2d9ca;
+            --panel: #f0ebe0;
+            --surface: #ece5d9;
+            --ink: #0f1a20;
+            --accent-red: #d14030;
+            --accent-yellow: #e8b000;
+            --accent-orange: #e07020;
+            --accent-green: #4a8030;
+            --muted: #6f7a80;
+            --border: #3a3430;
+            --structural: #2b2520;
+            --cream: #f5f3f0;
+            --stroke: #0f1a20;
+            --s1: 4px;
+            --s2: 8px;
+            --s3: 12px;
+            --s4: 16px;
+            --s5: 24px;
+            --s6: 32px;
+            --font-mono: 'JetBrains Mono','Fira Code','Cascadia Code','SF Mono','Menlo','Consolas','Courier New',monospace;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        html { background:#1a1714; font-family:var(--font-mono); font-size:15px; line-height:1.6; color:var(--ink); letter-spacing:0.02em; }
+        body { display:flex; justify-content:center; min-height:100vh; background:transparent; }
+        #app {
+            width:100%; max-width:420px; min-height:100vh; display:flex; flex-direction:column; position:relative; overflow-x:hidden;
+            border-left:3px solid var(--structural); border-right:3px solid var(--structural); background:var(--bg-light);
+        }
+        #app::before { content:''; position:absolute; inset:0; background:var(--bg-dark); clip-path:polygon(0 0,100% 0,0 70%); z-index:0; pointer-events:none; }
+        #app::after { content:''; position:absolute; inset:0; background:var(--bg-mid); clip-path:polygon(100% 0,0 100%,100% 100%); z-index:0; pointer-events:none; }
+        .chisel { position:relative; background:transparent; clip-path:var(--clip-panel); }
+        .chisel::before { content:''; position:absolute; inset:0; background:var(--chisel-bg,var(--panel)); clip-path:inherit; filter:drop-shadow(1px 0 0 var(--stroke)) drop-shadow(-1px 0 0 var(--stroke)) drop-shadow(0 1px 0 var(--stroke)) drop-shadow(0 -1px 0 var(--stroke)); z-index:-1; pointer-events:none; }
+        header { position:sticky; top:0; z-index:20; --clip-panel:polygon(0 0,100% 0,100% calc(100% - 10px),calc(100% - 14px) 100%,0 100%,0 0); --chisel-bg:var(--structural); }
+        header .header-content { display:flex; justify-content:space-between; align-items:center; padding:var(--s3) var(--s4); position:relative; z-index:1; }
+        header .label { font-weight:700; font-size:1.4rem; letter-spacing:0.15em; text-transform:uppercase; color:var(--accent-yellow); }
+        header .time-display { font-size:0.9rem; color:var(--bg-light); letter-spacing:0.05em; }
+        .section-title { display:flex; justify-content:space-between; align-items:center; padding:var(--s4) var(--s4) var(--s2); font-weight:700; text-transform:uppercase; letter-spacing:0.1em; font-size:0.9rem; color:var(--structural); border-bottom:2px solid var(--border); margin:0 var(--s3); position:relative; z-index:1; flex-wrap:wrap; gap:var(--s2); }
+        .btn-group { display:flex; gap:var(--s2); align-items:center; }
+        .btn { cursor:pointer; border:none; font-family:inherit; font-weight:700; font-size:0.75rem; padding:var(--s1) var(--s3); letter-spacing:0.08em; clip-path:polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,8px 100%,0 calc(100% - 8px)); transition:background-color 0.15s,color 0.15s; display:inline-flex; align-items:center; gap:var(--s1); }
+        .btn-add { background:var(--structural); color:var(--accent-yellow); }
+        .btn-add:hover { background:var(--accent-orange); color:#fff; }
+        .btn-add:active { background:var(--accent-red); }
+        .btn-export { background:var(--accent-green); color:#fff; }
+        .btn-export:hover { background:#5a9e3a; }
+        .btn-export:active { background:var(--accent-red); }
+        .btn-import { background:var(--accent-orange); color:#fff; }
+        .btn-import:hover { background:#e8822a; }
+        .btn-import:active { background:var(--accent-red); }
+        #repo-list { flex-shrink:0; padding:0 var(--s3) var(--s2); position:relative; z-index:1; }
+        .repo-row { --clip-panel:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,10px 100%,0 calc(100% - 10px)); --chisel-bg:var(--panel); margin-bottom:var(--s2); cursor:pointer; }
+        .repo-row-body { display:grid; grid-template-columns:56px 1fr auto; gap:var(--s1) var(--s2); align-items:start; padding:var(--s3) var(--s4); position:relative; z-index:1; }
+        .repo-row .row-time { font-weight:700; font-size:1rem; grid-row:1/3; align-self:center; color:var(--structural); }
+        .repo-row .row-name { font-weight:700; font-size:0.9rem; color:var(--ink); }
+        .repo-row .row-coords { font-size:0.75rem; color:var(--muted); display:flex; align-items:baseline; gap:var(--s1); flex-wrap:wrap; }
+        .osm-link { font-size:0.7rem; font-weight:700; color:var(--accent-green); text-decoration:none; border:1px solid var(--accent-green); padding:0 var(--s1); clip-path:polygon(0 0,calc(100% - 4px) 0,100% 4px,100% 100%,3px 100%,0 calc(100% - 3px)); display:inline-flex; align-items:center; gap:2px; white-space:nowrap; }
+        .osm-link:hover { background:var(--accent-green); color:#fff; }
+        .repo-row.selected { --chisel-bg:#faf5ea; }
+        .repo-row .row-index { font-size:0.65rem; color:var(--muted); opacity:0.7; grid-column:3; grid-row:1/3; align-self:center; text-align:right; }
+        #edit-panel { display:none; margin:0 var(--s3) var(--s3); --clip-panel:polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,14px 100%,0 calc(100% - 14px)); --chisel-bg:var(--surface); flex-shrink:0; position:relative; z-index:1; }
+        #edit-panel.visible { display:block; }
+        .edit-panel-inner { padding:var(--s4); position:relative; z-index:1; }
+        #edit-panel label { display:block; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.12em; color:var(--muted); margin-bottom:var(--s1); margin-top:var(--s3); }
+        #edit-panel input { width:100%; padding:var(--s2) var(--s3); font-family:inherit; font-size:0.85rem; background:#faf8f3; border:1.5px solid var(--border); color:var(--ink); clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px)); outline:none; }
+        #edit-panel input:focus { border-color:var(--accent-orange); background:#fffef9; }
+        .update-btn { margin-top:var(--s4); cursor:pointer; background:var(--structural); color:var(--accent-yellow); border:none; font-family:inherit; font-weight:700; font-size:0.85rem; padding:var(--s3) var(--s5); letter-spacing:0.1em; text-transform:uppercase; clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,8px 100%,0 calc(100% - 8px)); width:100%; display:inline-flex; align-items:center; justify-content:center; gap:var(--s2); }
+        .update-btn:hover { background:var(--accent-green); color:#fff; }
+        #map-container { flex-shrink:0; margin:0 var(--s3) var(--s3); --clip-panel:polygon(0 0,calc(100% - 16px) 0,100% 16px,100% 100%,12px 100%,0 calc(100% - 12px)); --chisel-bg:#eae5da; overflow:hidden; position:relative; z-index:1; }
+        #map-canvas { display:block; width:100%; height:240px; position:relative; z-index:1; }
+        .map-label { position:absolute; font-size:0.6rem; color:var(--muted); letter-spacing:0.06em; pointer-events:none; text-transform:uppercase; z-index:2; }
+        .map-label-tl { top:var(--s2); left:var(--s2); }
+        .map-label-br { bottom:var(--s2); right:var(--s2); }
+        #ticket-view { display:none; margin:0 var(--s3) var(--s3); --clip-panel:polygon(0 0,100% 0,100% 82%,82% 100%,0 100%); --chisel-bg:var(--cream); flex-shrink:0; position:relative; z-index:1; }
+        #ticket-view.visible { display:block; }
+        .ticket-inner { padding:var(--s5) var(--s4); position:relative; z-index:1; }
+        .ticket-name { font-weight:700; font-size:1.3rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--structural); }
+        .ticket-code { font-size:2.2rem; font-weight:700; color:var(--accent-red); letter-spacing:0.15em; margin:var(--s2) 0; word-break:break-all; }
+        .ticket-meta { font-size:0.75rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em; margin:var(--s1) 0; display:flex; align-items:center; gap:var(--s2); flex-wrap:wrap; }
+        .ticket-nocap { display:inline-flex; align-items:center; gap:var(--s1); background:var(--structural); color:var(--accent-yellow); font-weight:700; font-size:0.7rem; padding:var(--s1) var(--s3); letter-spacing:0.1em; clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,4px 100%,0 calc(100% - 4px)); margin:var(--s2) 0; }
+        .checkin-btn { display:block; width:100%; margin-top:var(--s4); cursor:pointer; background:var(--accent-red); color:#fff; border:none; font-family:inherit; font-weight:700; font-size:0.95rem; padding:var(--s3) var(--s5); letter-spacing:0.1em; text-transform:uppercase; clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,8px 100%,0 calc(100% - 8px)); }
+        .checkin-btn:hover { background:var(--accent-orange); }
+        #confirmation { display:none; margin:0 var(--s3) var(--s4); --clip-panel:polygon(0 0,calc(100% - 20px) 0,100% 20px,100% 100%,16px 100%,0 calc(100% - 16px)); --chisel-bg:var(--structural); flex-shrink:0; position:relative; z-index:1; color:var(--accent-green); font-weight:700; font-size:1.1rem; text-align:center; letter-spacing:0.08em; text-transform:uppercase; line-height:1.7; }
+        #confirmation.visible { display:block; animation:pulse-stroke 1.8s infinite; }
+        .conf-inner { padding:var(--s5) var(--s4); position:relative; z-index:1; }
+        @keyframes pulse-stroke { 0%,100%{ filter:drop-shadow(1px 0 0 var(--accent-green)) drop-shadow(-1px 0 0 var(--accent-green)) drop-shadow(0 1px 0 var(--accent-green)) drop-shadow(0 -1px 0 var(--accent-green)); } 50%{ filter:drop-shadow(1px 0 0 var(--accent-yellow)) drop-shadow(-1px 0 0 var(--accent-yellow)) drop-shadow(0 1px 0 var(--accent-yellow)) drop-shadow(0 -1px 0 var(--accent-yellow)); } }
+        .conf-accent { color:var(--accent-yellow); font-size:1.4rem; display:block; margin-top:var(--s1); }
+        .divider { height:3px; background:repeating-linear-gradient(90deg,var(--border) 0,var(--border) 8px,transparent 8px,transparent 16px); margin:var(--s1) var(--s3); opacity:0.4; position:relative; z-index:1; }
+        .empty-state { text-align:center; padding:var(--s5) var(--s4); color:var(--muted); font-size:0.8rem; text-transform:uppercase; border:1px dashed var(--border); margin:0 var(--s3) var(--s3); clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,8px 100%,0 calc(100% - 8px)); background:var(--panel); }
+        ::-webkit-scrollbar { width:6px; }
+        ::-webkit-scrollbar-track { background:var(--bg-mid); }
+        ::-webkit-scrollbar-thumb { background:var(--border); border-radius:0; }
+        #magnet-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:100; justify-content:center; align-items:center; }
+        #magnet-modal.visible { display:flex; }
+        .modal-content { background:var(--panel); border:2px solid var(--border); clip-path:polygon(0 0,calc(100% - 20px) 0,100% 20px,100% 100%,16px 100%,0 calc(100% - 16px)); padding:var(--s5); max-width:360px; width:90%; }
+        .modal-content textarea { width:100%; height:80px; font-family:inherit; font-size:0.75rem; padding:var(--s2); }
+        .modal-actions { display:flex; gap:var(--s2); margin-top:var(--s3); justify-content:flex-end; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <header class="chisel">
+            <div class="header-content">
+                <span class="label">NLP</span>
+                <span class="time-display" id="header-time">--:--</span>
+            </div>
+        </header>
+
+        <div class="section-title">
+            <span>PARTIES</span>
+            <div class="btn-group">
+                <button class="btn btn-add" id="btn-add">+ ADD</button>
+                <button class="btn btn-export" id="btn-export">⬆ EXPORT</button>
+                <button class="btn btn-import" id="btn-import">⬇ IMPORT</button>
+            </div>
+        </div>
+
+        <div id="repo-list"></div>
+
+        <div id="edit-panel" class="chisel">
+            <div class="edit-panel-inner">
+                <label for="edit-name">Name</label>
+                <input type="text" id="edit-name" placeholder="EVENT NAME" autocomplete="off">
+                <label for="edit-time">Time (HH:MM)</label>
+                <input type="text" id="edit-time" placeholder="21:30" autocomplete="off">
+                <label for="edit-coords">GPS (lon, lat)</label>
+                <input type="text" id="edit-coords" placeholder="-74.006,40.7128" autocomplete="off">
+                <button class="update-btn" id="btn-update">UPDATE</button>
+            </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div id="map-container" class="chisel">
+            <canvas id="map-canvas"></canvas>
+            <span class="map-label map-label-tl">MAP</span>
+            <span class="map-label map-label-br" id="map-coord-label">—</span>
+        </div>
+
+        <div id="ticket-view" class="chisel">
+            <div class="ticket-inner">
+                <span class="ticket-perf">TICKET</span>
+                <div class="ticket-name" id="ticket-name">—</div>
+                <div class="ticket-code" id="ticket-code">————</div>
+                <div class="ticket-meta" id="ticket-time">—</div>
+                <div class="ticket-meta" id="ticket-coords"><span>—</span><a class="osm-link-ticket" id="ticket-osm" href="#" target="_blank">OSM</a></div>
+                <span class="ticket-nocap">NO CAPTURE</span>
+                <button class="checkin-btn" id="btn-checkin">CHECK IN</button>
+            </div>
+        </div>
+
+        <div id="confirmation" class="chisel"><div class="conf-inner">YOU'RE IN.<br><span class="conf-accent">SEE YOU SOON.</span></div></div>
+    </div>
+
+    <!-- magnet modal -->
+    <div id="magnet-modal">
+        <div class="modal-content">
+            <p style="font-weight:700; letter-spacing:0.1em;">MAGNET LINK</p>
+            <textarea id="magnet-textarea" readonly></textarea>
+            <div class="modal-actions">
+                <button class="btn btn-import" id="modal-copy">COPY</button>
+                <button class="btn btn-add" id="modal-close">CLOSE</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        (() => {
+            // ── YJS & WEBTORRENT SETUP ──
+            const ydoc = new Y.Doc();
+            const yevents = ydoc.getArray('events');
+
+            // local state mirror
+            let events = [];
+
+            // WebTorrent client (created on first export/import)
+            let client = null;
+            let currentTorrent = null; // for seeding
+
+            // ── UTILS ──
+            const $ = (sel) => document.querySelector(sel);
+            const repoList = $('#repo-list');
+            const editPanel = $('#edit-panel');
+            const ticketView = $('#ticket-view');
+            const confirmation = $('#confirmation');
+            const mapCanvas = $('#map-canvas');
+            const mapCoordLabel = $('#map-coord-label');
+            const headerTime = $('#header-time');
+            const inputName = $('#edit-name');
+            const inputTime = $('#edit-time');
+            const inputCoords = $('#edit-coords');
+
+            let selectedIndex = null;
+            let showTicket = false;
+            let checked = false;
+            let editIsNew = false;
+
+            // ── OBSERVE YJS CHANGES ──
+            function updateFromYjs() {
+                events = yevents.toJSON();
+                renderAll();
+            }
+            yevents.observe(() => updateFromYjs());
+
+            // initial seed
+            if (yevents.length === 0) {
+                ydoc.transact(() => {
+                    yevents.push([
+                        { name: 'WAREHOUSE FREQ', time: '21:30', coords: [-73.9855, 40.7484] },
+                        { name: 'BRIDGE PULSE', time: '22:00', coords: [-73.978, 40.7527] },
+                        { name: 'CANAL RITUAL', time: '23:15', coords: [-73.991, 40.745] },
+                        { name: 'ROOFTOP STATIC', time: '00:30', coords: [-73.9812, 40.758] },
+                    ]);
+                });
+            }
+            updateFromYjs();
+
+            // ── RENDER ──
+            function renderAll() {
+                renderRepoList();
+                renderMap();
+                if (showTicket && selectedIndex !== null) renderTicket();
+                updateClock();
+            }
+
+            function updateClock() {
+                const now = new Date();
+                headerTime.textContent = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+            }
+            setInterval(updateClock, 15000);
+
+            function renderMap() {
+                const canvas = mapCanvas;
+                const container = canvas.parentElement;
+                const rect = container.getBoundingClientRect();
+                const w = rect.width, h = 240, dpr = Math.min(window.devicePixelRatio || 1, 2);
+                canvas.width = w * dpr; canvas.height = h * dpr;
+                canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+                const ctx = canvas.getContext('2d');
+                ctx.setTransform(1,0,0,1,0,0); ctx.scale(dpr,dpr);
+                ctx.fillStyle = '#eae5da'; ctx.fillRect(0,0,w,h);
+                ctx.strokeStyle = '#bfb7ab'; ctx.lineWidth = 0.5;
+                for (let x=40; x<w; x+=40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+                for (let y=40; y<h; y+=40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+                ctx.strokeStyle = '#8a8278'; ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.moveTo(w/2,0); ctx.lineTo(w/2,h); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0,h/2); ctx.lineTo(w,h/2); ctx.stroke();
+                ctx.strokeStyle = '#3a3430'; ctx.lineWidth = 2; ctx.strokeRect(1,1,w-2,h-2);
+                if (events.length === 0) { mapCoordLabel.textContent = 'NO DATA'; return; }
+                let minLon=Infinity,maxLon=-Infinity,minLat=Infinity,maxLat=-Infinity;
+                events.forEach(e=>{ if(e.coords[0]<minLon)minLon=e.coords[0]; if(e.coords[0]>maxLon)maxLon=e.coords[0]; if(e.coords[1]<minLat)minLat=e.coords[1]; if(e.coords[1]>maxLat)maxLat=e.coords[1]; });
+                const lonSpan=maxLon-minLon||0.02, latSpan=maxLat-minLat||0.02, pad=0.25;
+                const lonMin=minLon-lonSpan*pad, lonMax=maxLon+lonSpan*pad, latMin=minLat-latSpan*pad, latMax=maxLat+latSpan*pad;
+                const margin=28, plotW=w-margin*2, plotH=h-margin*2;
+                const project=(lon,lat)=>[margin+((lon-lonMin)/(lonMax-lonMin))*plotW, margin+((latMax-lat)/(latMax-latMin))*plotH];
+                const midLon=(lonMin+lonMax)/2, midLat=(latMin+latMax)/2, [cx,cy]=project(midLon,midLat);
+                ctx.fillStyle='#6f7a80'; ctx.font='9px "JetBrains Mono","Courier New",monospace'; ctx.textAlign='center';
+                ctx.fillText(midLat.toFixed(4),cx,h-6); ctx.fillText(midLon.toFixed(4),cx,14);
+                mapCoordLabel.textContent = `lon ${midLon.toFixed(4)}  lat ${midLat.toFixed(4)}`;
+                events.forEach((ev,i)=>{
+                    const [px,py]=project(ev.coords[0],ev.coords[1]), size=7;
+                    ctx.save(); ctx.translate(px,py); ctx.rotate(Math.PI/4);
+                    ctx.fillStyle = i===0 ? '#d14030' : '#161310'; ctx.fillRect(-size/2,-size/2,size,size); ctx.restore();
+                    if(i===0){ ctx.beginPath(); ctx.arc(px,py,size+4,0,Math.PI*2); ctx.strokeStyle='#d14030'; ctx.lineWidth=1.5; ctx.stroke(); }
+                    ctx.fillStyle = i===0 ? '#fff' : '#e8b000'; ctx.beginPath(); ctx.arc(px,py,2,0,Math.PI*2); ctx.fill();
+                });
+            }
+
+            function renderRepoList() {
+                repoList.innerHTML = events.length === 0
+                    ? '<div class="empty-state">NO PARTIES REGISTERED.<br>PRESS + ADD TO CREATE ONE.</div>'
+                    : events.map((ev,i)=>{
+                        const osmUrl = `https://www.openstreetmap.org/?mlat=${ev.coords[1]}&mlon=${ev.coords[0]}`;
+                        return `<div class="repo-row chisel${selectedIndex===i?' selected':''}" data-index="${i}"><div class="repo-row-body">
+                            <span class="row-time">${ev.time}</span><span class="row-name">${ev.name}</span>
+                            <span class="row-coords">${ev.coords[0].toFixed(4)}, ${ev.coords[1].toFixed(4)}
+                                <a class="osm-link" href="${osmUrl}" target="_blank">OSM</a></span>
+                            <span class="row-index">#${i}</span></div></div>`;
+                    }).join('');
+                repoList.querySelectorAll('.repo-row').forEach(row=>{
+                    row.addEventListener('click',function(e){ if(e.target.closest('a'))return; openEditForEvent(parseInt(this.dataset.index)); });
+                });
+            }
+
+            function openEditForEvent(index) {
+                selectedIndex = index; editIsNew = false; showTicket = false; checked = false;
+                const ev = events[index];
+                inputName.value = ev.name; inputTime.value = ev.time; inputCoords.value = ev.coords[0].toFixed(5)+', '+ev.coords[1].toFixed(5);
+                editPanel.classList.add('visible'); ticketView.classList.remove('visible'); confirmation.classList.remove('visible');
+                renderRepoList(); inputName.focus();
+            }
+
+            function openEditForNew() {
+                selectedIndex = null; editIsNew = true; showTicket = false; checked = false;
+                inputName.value = ''; inputTime.value = ''; inputCoords.value = '';
+                editPanel.classList.add('visible'); ticketView.classList.remove('visible'); confirmation.classList.remove('visible');
+                renderRepoList(); inputName.focus();
+            }
+
+            function handleUpdate() {
+                const name = inputName.value.trim() || 'UNTITLED';
+                const time = inputTime.value.trim() || '00:00';
+                const parts = inputCoords.value.trim().split(',').map(s=>parseFloat(s.trim()));
+                let lon = parts[0], lat = parts[1];
+                if(isNaN(lon)||isNaN(lat)) { lon = -74.0; lat = 40.71; }
+                const coords = [lon, lat];
+                ydoc.transact(() => {
+                    if (editIsNew) {
+                        yevents.push([{ name, time, coords }]);
+                        selectedIndex = yevents.length - 1;
+                    } else if (selectedIndex !== null) {
+                        yevents.delete(selectedIndex, 1);
+                        yevents.insert(selectedIndex, [{ name, time, coords }]);
+                    }
+                });
+                editIsNew = false; showTicket = true; checked = false;
+                editPanel.classList.remove('visible'); confirmation.classList.remove('visible');
+                renderAll();
+            }
+
+            function renderTicket() {
+                if (!showTicket || selectedIndex === null) { ticketView.classList.remove('visible'); return; }
+                const ev = events[selectedIndex];
+                if (!ev) { ticketView.classList.remove('visible'); return; }
+                $('#ticket-name').textContent = ev.name;
+                $('#ticket-code').textContent = generateCode(ev);
+                $('#ticket-time').textContent = 'TIME: ' + ev.time;
+                const coordSpan = $('#ticket-coords span');
+                if (coordSpan) coordSpan.textContent = 'GPS: ' + ev.coords[0].toFixed(5) + ', ' + ev.coords[1].toFixed(5);
+                $('#ticket-osm').href = `https://www.openstreetmap.org/?mlat=${ev.coords[1]}&mlon=${ev.coords[0]}`;
+                ticketView.classList.add('visible');
+            }
+
+            function generateCode(ev) {
+                const h = Math.abs(ev.name.split('').reduce((a,c)=>a+c.charCodeAt(0),0)).toString(16).toUpperCase().slice(-6);
+                const m = Math.abs(Math.round(ev.coords[0]*10000+ev.coords[1]*10000)).toString(16).toUpperCase().slice(-4);
+                return 'NLP-'+h+'-'+m;
+            }
+
+            function handleCheckIn() {
+                checked = true; ticketView.classList.remove('visible'); confirmation.classList.add('visible');
+                confirmation.scrollIntoView({ behavior:'smooth', block:'center' }); renderRepoList();
+            }
+
+            // ── EXPORT (WebTorrent seed) ──
+            async function exportMagnet() {
+                if (!client) client = new WebTorrent();
+                // stop previous seed if exists
+                if (currentTorrent) {
+                    client.remove(currentTorrent, () => {});
+                }
+                // get Yjs update as binary
+                const update = Y.encodeStateAsUpdate(ydoc);
+                const blob = new Blob([update], { type: 'application/octet-stream' });
+                const buf = await blob.arrayBuffer();
+                const file = new File([buf], 'nlp-spatial-update.bin', { type: 'application/octet-stream' });
+                // seed from memory
+                client.seed(file, { name: 'nlp-spatial-sync' }, (torrent) => {
+                    currentTorrent = torrent;
+                    const magnet = torrent.magnetURI;
+                    showMagnetModal(magnet);
+                });
+            }
+
+            function showMagnetModal(magnet) {
+                $('#magnet-textarea').value = magnet;
+                $('#magnet-modal').classList.add('visible');
+            }
+
+            // ── IMPORT (download magnet and apply update) ──
+            async function importMagnet() {
+                const magnet = prompt('Paste magnet link:');
+                if (!magnet || !magnet.startsWith('magnet:')) return;
+                if (!client) client = new WebTorrent();
+                // stop previous seed
+                if (currentTorrent) {
+                    client.remove(currentTorrent, () => {});
+                }
+                client.add(magnet, (torrent) => {
+                    // find the bin file
+                    const file = torrent.files.find(f => f.name === 'nlp-spatial-update.bin');
+                    if (!file) { alert('No update file found in torrent'); return; }
+                    file.getBuffer((err, buf) => {
+                        if (err) { alert('Error downloading: '+err); return; }
+                        // apply to Yjs
+                        Y.applyUpdate(ydoc, new Uint8Array(buf));
+                        updateFromYjs();
+                        alert('Imported successfully! List updated.');
+                        // optionally stop the torrent after import
+                        client.remove(torrent, () => {});
+                    });
+                });
+            }
+
+            // ── MODAL CONTROLS ──
+            document.addEventListener('click', e => {
+                if (e.target.id === 'modal-close') {
+                    $('#magnet-modal').classList.remove('visible');
+                } else if (e.target.id === 'modal-copy') {
+                    const ta = $('#magnet-textarea');
+                    ta.select();
+                    document.execCommand('copy');
+                    alert('Copied to clipboard');
+                }
+            });
+
+            // ── BUTTON LISTENERS ──
+            $('#btn-add').addEventListener('click', openEditForNew);
+            $('#btn-update').addEventListener('click', handleUpdate);
+            $('#btn-checkin').addEventListener('click', handleCheckIn);
+            $('#btn-export').addEventListener('click', exportMagnet);
+            $('#btn-import').addEventListener('click', importMagnet);
+
+            // ── KEYBOARD SHORTCUTS ──
+            [inputName, inputTime, inputCoords].forEach(inp => inp.addEventListener('keydown', e => { if(e.key==='Enter') handleUpdate(); }));
+            document.addEventListener('keydown', e => { if(e.key==='Escape'){ editPanel.classList.remove('visible'); selectedIndex=null; editIsNew=false; renderRepoList(); } });
+
+            // ── INIT ──
+            requestAnimationFrame(()=>{ requestAnimationFrame(renderAll); });
+        })();
+    </script>
+</body>
+</html>
